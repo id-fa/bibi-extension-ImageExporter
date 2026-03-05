@@ -6,6 +6,8 @@ Export pages as images (single / spread) or PDF.
 [Bibi](https://bibi.epub.link/) ePub Reader用の拡張機能です。
 ページ画像の保存・見開き結合保存・PDF変換機能を提供します。
 
+[DEMO](https://id-fa.github.io/bibi-extension-ImageExporter/DEMO/)
+
 ## Features / 機能
 
 - **Single page download** — Save the current page as JPEG / 現在のページをJPEGで保存
