@@ -144,6 +144,34 @@ Bibi.x({
     return 0;
   }
 
+  function getCurrentSpreadPages() {
+    var indices = [];
+    try {
+      if (R.Current && R.Current.Pages && R.Current.Pages.length > 0) {
+        for (var p = 0; p < R.Current.Pages.length; p++) {
+          var cp = R.Current.Pages[p];
+          for (var i = 0; i < allPages.length; i++) {
+            if (allPages[i].page === cp) { indices.push(i); break; }
+          }
+        }
+      }
+    } catch (e) {}
+    if (indices.length === 0) {
+      try {
+        if (H && H.PageObserver && H.PageObserver.Current && H.PageObserver.Current.Pages) {
+          var pages = H.PageObserver.Current.Pages;
+          for (var p = 0; p < pages.length; p++) {
+            for (var i = 0; i < allPages.length; i++) {
+              if (allPages[i].page === pages[p]) { indices.push(i); break; }
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    if (indices.length === 0) indices.push(0);
+    return indices;
+  }
+
   // ── Page Capture ──
 
   function getPageDrawable(pageIdx) {
@@ -687,27 +715,66 @@ Bibi.x({
     var pageLabel = document.createElement("span");
     pageLabel.style.cssText = "flex:1; text-align:center; font-size:13px; min-width:50px;";
 
+    var curSpread = [cur];
+    var dlContainer = document.createElement("span");
+    dlContainer.style.display = "contents";
+    var lastDLKey = "";
+
     function update() {
-      pageLabel.textContent = (cur + 1) + " / " + allPages.length;
+      curSpread = getCurrentSpreadPages();
+      if (curSpread.length === 0) curSpread = [cur];
+      cur = curSpread[0];
+      if (curSpread.length >= 2) {
+        var sorted = curSpread.slice().sort(function (a, b) { return a - b; });
+        pageLabel.textContent = (sorted[0] + 1) + "-" + (sorted[1] + 1) + " / " + allPages.length;
+      } else {
+        pageLabel.textContent = (cur + 1) + " / " + allPages.length;
+      }
+      updateDLButtons();
     }
+
+    function updateDLButtons() {
+      var sorted = curSpread.slice().sort(function (a, b) { return a - b; });
+      var key = curSpread.length + ":" + sorted.join(",");
+      if (key === lastDLKey) return;
+      lastDLKey = key;
+      while (dlContainer.firstChild) dlContainer.removeChild(dlContainer.firstChild);
+
+      if (curSpread.length >= 2) {
+        var leftIdx, rightIdx;
+        if (direction === "R2L") {
+          leftIdx = sorted[1];
+          rightIdx = sorted[0];
+        } else {
+          leftIdx = sorted[0];
+          rightIdx = sorted[1];
+        }
+        dlContainer.appendChild(mkBtn("DL" + (leftIdx + 1), "#2196F3", function (b) { downloadPage(leftIdx, b); }));
+        dlContainer.appendChild(mkBtn("DL" + (rightIdx + 1), "#2196F3", function (b) { downloadPage(rightIdx, b); }));
+      } else {
+        dlContainer.appendChild(mkBtn("DL", "#2196F3", function (b) { downloadPage(curSpread[0], b); }));
+      }
+    }
+
     update();
 
-    var prevBtn = mkBtn("\u25C0", "#555", function () { if (cur > 0) { cur--; update(); } });
-    var nextBtn = mkBtn("\u25B6", "#555", function () { if (cur < allPages.length - 1) { cur++; update(); } });
-    var dlBtn = mkBtn("DL", "#2196F3", function (b) { downloadPage(cur, b); });
+    var prevBtn = mkBtn("\u25C0", "#555", function () { E.dispatch("bibi:commands:move-by", direction === "R2L" ? 1 : -1); });
+    var nextBtn = mkBtn("\u25B6", "#555", function () { E.dispatch("bibi:commands:move-by", direction === "R2L" ? -1 : 1); });
     var dl2Btn = mkBtn("2P", "#e91e63", function (b) { downloadSpread(cur, b); });
     var dlAllBtn = mkBtn("All", "#FF9800", function (b) { downloadAll(b); });
     var pdfBtn = mkBtn("PDF", "#9C27B0", function (b) { generatePDF(b); });
     var dirBtn = mkBtn(direction, "#607D8B", function (b) {
       direction = direction === "R2L" ? "L2R" : "R2L";
       b.textContent = direction;
+      lastDLKey = "";
+      updateDLButtons();
     });
     var closeBtn = mkBtn("X", "#666", function () { hidePanel(); });
 
     navRow.appendChild(prevBtn);
     navRow.appendChild(pageLabel);
     navRow.appendChild(nextBtn);
-    navRow.appendChild(dlBtn);
+    navRow.appendChild(dlContainer);
     navRow.appendChild(dl2Btn);
     navRow.appendChild(dlAllBtn);
     navRow.appendChild(pdfBtn);
