@@ -125,10 +125,11 @@ doc.viewerPreferences({ Direction: 'R2L', PageLayout: 'TwoPageRight' })
 ## UI
 
 ### コンパクトパネル (デスクトップ・モバイル共通)
-ボタン行: `◀ [N/M] ▶ DL 2P All PDF R2L X`
+ボタン行: `◀ [N/M] ▶ DL 2P All PDF R2L X ☒`
 
 - デスクトップ: `top: 44px, left: 10px` (Bibiメニューバーの下)
 - モバイル: `bottom: max(50px, calc(10px + env(safe-area-inset-bottom, 40px)))` (iOS Safe Area対応)
+- 全ボタンに `title` 属性でツールチップを設定
 
 ### ◀▶ページ送りボタン
 `E.dispatch("bibi:commands:move-by", ±1)` でBibiの実際のページめくりを実行する。
@@ -143,9 +144,24 @@ doc.viewerPreferences({ Direction: 'R2L', PageLayout: 'TwoPageRight' })
 - ページラベルも見開き時は `5-6 / 100` のように両ページ番号を表示
 - 方向切り替え(R2L/L2R)時にDLボタンの左右配置も再構築
 
+### 本を閉じるボタン (☒)
+- `X`（パネル非表示）とは別のボタン。本を閉じてCatcher画面（D&D受付）に戻る
+- 誤操作防止のため2回クリックで確定（1回目で `☒?` 表示、2秒以内に再クリックで実行）
+- 動作: UIクリーンアップ後 `location.pathname` に遷移（クエリパラメータ除去）
+
+### D&D による本の差し替え
+本を開いた状態でもEPUB/ZIPファイルのD&Dを受け付ける。
+Bibiの読み込みパイプラインはワンショット設計のため、IndexedDBを中継する:
+1. ファイルドラッグ時に青い半透明オーバーレイ表示
+2. ドロップ → `FileReader` でArrayBufferに変換 → IndexedDB (`PageExporterDB`) に保存
+3. `location.pathname` に遷移してリロード
+4. 拡張初期化時に `feedPendingFileToCatcher()` がIndexedDBをチェック
+5. `#bibi-catcher` に合成dropイベントを発火 → Bibiが自動読み込み
+
 ### トグルボタン
 - パネルClose後、Bibiメニューバーがhover状態のとき表示 (MutationObserverで監視)
 - フェードイン/アウトアニメーション (opacity transition 0.15s)
+- `title` 属性でツールチップ表示
 
 ### イベント伝播防止
 パネルとトグルボタンで `mousedown/mouseup/touchstart/touchend/pointerdown/pointerup` を `stopPropagation`。

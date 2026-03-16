@@ -574,6 +574,7 @@ Bibi.x({
 
     toggleBtn = document.createElement("button");
     toggleBtn.textContent = "\u{1F4E5}";  // 📥
+    toggleBtn.title = "Show Page Exporter";
     Object.assign(toggleBtn.style, {
       position: "fixed", zIndex: "999998",
       background: "#1a1a1a", color: "#fff", border: "1px solid #555",
@@ -749,27 +750,51 @@ Bibi.x({
           leftIdx = sorted[0];
           rightIdx = sorted[1];
         }
-        dlContainer.appendChild(mkBtn("DL" + (leftIdx + 1), "#2196F3", function (b) { downloadPage(leftIdx, b); }));
-        dlContainer.appendChild(mkBtn("DL" + (rightIdx + 1), "#2196F3", function (b) { downloadPage(rightIdx, b); }));
+        var dlL = mkBtn("DL" + (leftIdx + 1), "#2196F3", function (b) { downloadPage(leftIdx, b); });
+        dlL.title = "Download Page " + (leftIdx + 1);
+        dlContainer.appendChild(dlL);
+        var dlR = mkBtn("DL" + (rightIdx + 1), "#2196F3", function (b) { downloadPage(rightIdx, b); });
+        dlR.title = "Download Page " + (rightIdx + 1);
+        dlContainer.appendChild(dlR);
       } else {
-        dlContainer.appendChild(mkBtn("DL", "#2196F3", function (b) { downloadPage(curSpread[0], b); }));
+        var dlBtn = mkBtn("DL", "#2196F3", function (b) { downloadPage(curSpread[0], b); });
+        dlBtn.title = "Download Current Page";
+        dlContainer.appendChild(dlBtn);
       }
     }
 
     update();
 
     var prevBtn = mkBtn("\u25C0", "#555", function () { E.dispatch("bibi:commands:move-by", direction === "R2L" ? 1 : -1); });
+    prevBtn.title = "Previous Page";
     var nextBtn = mkBtn("\u25B6", "#555", function () { E.dispatch("bibi:commands:move-by", direction === "R2L" ? -1 : 1); });
+    nextBtn.title = "Next Page";
     var dl2Btn = mkBtn("2P", "#e91e63", function (b) { downloadSpread(cur, b); });
+    dl2Btn.title = "Download Spread (2 Pages)";
     var dlAllBtn = mkBtn("All", "#FF9800", function (b) { downloadAll(b); });
+    dlAllBtn.title = "Download All Pages";
     var pdfBtn = mkBtn("PDF", "#9C27B0", function (b) { generatePDF(b); });
+    pdfBtn.title = "Export as PDF";
     var dirBtn = mkBtn(direction, "#607D8B", function (b) {
       direction = direction === "R2L" ? "L2R" : "R2L";
       b.textContent = direction;
       lastDLKey = "";
       updateDLButtons();
     });
+    dirBtn.title = "Toggle Page Direction";
     var closeBtn = mkBtn("X", "#666", function () { hidePanel(); });
+    closeBtn.title = "Hide Panel";
+    var closeBookBtn = mkBtn("\u2612", "#a33", function (b) {
+      if (!b._confirmed) {
+        b._confirmed = true;
+        b.textContent = "\u2612?";
+        b.style.background = "#c00";
+        setTimeout(function () { b._confirmed = false; b.textContent = "\u2612"; b.style.background = "#a33"; }, 2000);
+        return;
+      }
+      closeBook();
+    });
+    closeBookBtn.title = "Close Book (Click twice to confirm)";
 
     navRow.appendChild(prevBtn);
     navRow.appendChild(pageLabel);
@@ -780,6 +805,7 @@ Bibi.x({
     navRow.appendChild(pdfBtn);
     navRow.appendChild(dirBtn);
     navRow.appendChild(closeBtn);
+    navRow.appendChild(closeBookBtn);
     panelEl.appendChild(navRow);
 
     // Page tracking
@@ -789,13 +815,183 @@ Bibi.x({
     }, 1000);
   }
 
-  // ── Initialize on book open ──
+  // ── Close Book ──
+
+  function closeBook() {
+    if (pollId) { clearInterval(pollId); pollId = null; }
+    if (panelEl) { panelEl.remove(); panelEl = null; }
+    if (toggleBtn) { toggleBtn.remove(); toggleBtn = null; }
+    if (dropOverlay) { dropOverlay.remove(); dropOverlay = null; }
+    allPages = [];
+    window.location.href = window.location.pathname;
+  }
+
+  // ── IndexedDB helpers for D&D file relay ──
+
+  var DB_NAME = "PageExporterDB";
+  var DB_STORE = "files";
+  var DB_KEY = "pendingFile";
+
+  function openDB() {
+    return new Promise(function (resolve, reject) {
+      var req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = function (e) { e.target.result.createObjectStore(DB_STORE); };
+      req.onsuccess = function (e) { resolve(e.target.result); };
+      req.onerror = function () { reject(req.error); };
+    });
+  }
+
+  function storePendingFile(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        openDB().then(function (db) {
+          var tx = db.transaction(DB_STORE, "readwrite");
+          tx.objectStore(DB_STORE).put({ buffer: reader.result, name: file.name, type: file.type }, DB_KEY);
+          tx.oncomplete = function () { resolve(); };
+          tx.onerror = function () { reject(tx.error); };
+        }).catch(reject);
+      };
+      reader.onerror = function () { reject(reader.error); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function loadPendingFile() {
+    return openDB().then(function (db) {
+      return new Promise(function (resolve, reject) {
+        var tx = db.transaction(DB_STORE, "readwrite");
+        var store = tx.objectStore(DB_STORE);
+        var getReq = store.get(DB_KEY);
+        getReq.onsuccess = function () {
+          var data = getReq.result;
+          if (data) store.delete(DB_KEY);
+          resolve(data || null);
+        };
+        getReq.onerror = function () { reject(getReq.error); };
+      });
+    });
+  }
+
+  // ── D&D overlay when book is open ──
+
+  var dropOverlay = null;
+  var dragCounter = 0;
+
+  function setupDropHandler() {
+    // Create overlay (hidden by default)
+    dropOverlay = document.createElement("div");
+    Object.assign(dropOverlay.style, {
+      position: "fixed", top: "0", left: "0", width: "100%", height: "100%",
+      zIndex: "1000000", background: "rgba(33,150,243,0.25)",
+      display: "none", alignItems: "center", justifyContent: "center",
+      pointerEvents: "none"
+    });
+    var label = document.createElement("div");
+    Object.assign(label.style, {
+      background: "#1a1a1a", color: "#fff", padding: "24px 48px",
+      borderRadius: "12px", fontSize: "20px", fontFamily: "monospace",
+      border: "3px dashed #2196F3", pointerEvents: "none"
+    });
+    label.textContent = "\u{1F4D6} Drop EPUB / ZIP to open";
+    dropOverlay.appendChild(label);
+    document.body.appendChild(dropOverlay);
+
+    dragCounter = 0;
+
+    document.addEventListener("dragenter", function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.types || e.dataTransfer.types.indexOf("Files") < 0) return;
+      e.preventDefault();
+      dragCounter++;
+      if (dragCounter === 1) {
+        dropOverlay.style.display = "flex";
+      }
+    });
+
+    document.addEventListener("dragleave", function (e) {
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropOverlay.style.display = "none";
+      }
+    });
+
+    document.addEventListener("dragover", function (e) {
+      if (!e.dataTransfer || !e.dataTransfer.types || e.dataTransfer.types.indexOf("Files") < 0) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+    });
+
+    document.addEventListener("drop", function (e) {
+      dragCounter = 0;
+      dropOverlay.style.display = "none";
+
+      var file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file) return;
+      if (!/\.(epub|zip)$/i.test(file.name)) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Show loading indicator on panel
+      if (panelEl) {
+        var msg = document.createElement("div");
+        msg.textContent = "Loading: " + file.name;
+        Object.assign(msg.style, { padding: "4px 0", fontSize: "11px", color: "#aaa" });
+        panelEl.appendChild(msg);
+      }
+
+      storePendingFile(file).then(function () {
+        window.location.href = window.location.pathname;
+      }).catch(function (err) {
+        console.error("[PageExporter] Failed to store file for reload:", err);
+      });
+    });
+  }
+
+  // ── Auto-feed pending file to Catcher on reload ──
+
+  function feedPendingFileToCatcher() {
+    loadPendingFile().then(function (data) {
+      if (!data) return;
+      console.log("[PageExporter] Found pending file:", data.name);
+
+      var file = new File([data.buffer], data.name, { type: data.type });
+
+      function tryFeed() {
+        var catcher = document.getElementById("bibi-catcher");
+        if (!catcher) {
+          setTimeout(tryFeed, 100);
+          return;
+        }
+        // Dispatch synthetic drop event to Catcher
+        try {
+          var dt = new DataTransfer();
+          dt.items.add(file);
+          var dropEvt = new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true });
+          catcher.dispatchEvent(dropEvt);
+          console.log("[PageExporter] Auto-fed file to Catcher:", data.name);
+        } catch (err) {
+          console.error("[PageExporter] Auto-feed failed:", err);
+        }
+      }
+      tryFeed();
+    }).catch(function (err) {
+      console.error("[PageExporter] Failed to load pending file:", err);
+    });
+  }
+
+  // ── Initialize ──
+
+  // On extension load: check for pending D&D file and auto-feed to Catcher
+  feedPendingFileToCatcher();
 
   E.add("bibi:opened", function () {
     console.log("[PageExporter] Book opened, initializing...");
     setTimeout(function () {
       createToggleButton();
       createPanel();
+      setupDropHandler();
     }, 500);
   });
 
