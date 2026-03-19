@@ -25,6 +25,7 @@ Bibi.x({
   let panelEl = null;
   let toggleBtn = null;
   let pollId = null;
+  var originalTitle = document.title; // preserve page title before Bibi changes it
 
   // ── Utility Functions ──
 
@@ -981,6 +982,21 @@ Bibi.x({
     });
   }
 
+  // ── Title Lock ──
+  // Prevent Bibi from changing the page title to the book filename
+
+  function lockTitle() {
+    document.title = originalTitle;
+    var titleEl = document.querySelector("title");
+    if (titleEl) {
+      new MutationObserver(function () {
+        if (document.title !== originalTitle) {
+          document.title = originalTitle;
+        }
+      }).observe(titleEl, { childList: true, characterData: true, subtree: true });
+    }
+  }
+
   // ── Initialize ──
 
   // On extension load: check for pending D&D file and auto-feed to Catcher
@@ -988,6 +1004,7 @@ Bibi.x({
 
   E.add("bibi:opened", function () {
     console.log("[PageExporter] Book opened, initializing...");
+    lockTitle();
     setTimeout(function () {
       createToggleButton();
       createPanel();
